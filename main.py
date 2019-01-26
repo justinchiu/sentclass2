@@ -21,14 +21,15 @@ def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--filepath",
-        default="data",
+        #default="data",
+        default="~/research/GCAE/acsa-restaurant-large",
         type=str,
     )
 
     parser.add_argument("--devid", default=-1, type=int)
 
     parser.add_argument("--flat-data", action="store_true", default=False)
-    parser.add_argument("--data", choices=["sentihood",]) 
+    parser.add_argument("--data", choices=["semeval",]) 
 
     parser.add_argument("--bsz", default=33, type=int)
     parser.add_argument("--ebsz", default=150, type=int)
@@ -85,44 +86,20 @@ torch.cuda.manual_seed(args.seed)
 device = torch.device(f"cuda:{args.devid}" if args.devid >= 0 else "cpu")
 
 # Data
-import sentclass.sentihood as data
-from sentclass.sentihood import RandomIterator
+import sentclass.semeval as data
 
-TEXT, LOCATION, ASPECT, SENTIMENT = data.make_fields()
-train, valid, test = data.SentihoodDataset.splits(
-    TEXT, LOCATION, ASPECT, SENTIMENT, flat=args.flat_data, path=args.filepath)
-
-data.build_vocab(TEXT, LOCATION, ASPECT, SENTIMENT, train, valid, test)
-TEXT.vocab.load_vectors(vectors=GloVe(name="840B"))
-TEXT.vocab.vectors[TEXT.vocab.stoi["transit-location"]] = (
-    (TEXT.vocab.vectors[TEXT.vocab.stoi["transit"]] +
-        TEXT.vocab.vectors[TEXT.vocab.stoi["location"]]) / 2
+TEXT, ASPECT, SENTIMENT = data.make_fields()
+train, valid, test = data.SemevalDataset.splits(
+    TEXT, ASPECT, SENTIMENT, flat=args.flat_data, path=args.filepath,
+    train="acsa_train.json.train", validation="acsa_train.json.valid", test="acsa_test.json",
 )
 
-iterator = BucketIterator if not args.flat_data else RandomIterator
+data.build_vocab(TEXT, ASPECT, SENTIMENT, train, valid, test)
+TEXT.vocab.load_vectors(vectors=GloVe(name="840B"))
 
-train_iter, valid_iter, test_iter = iterator.splits(
+train_iter, valid_iter, test_iter = BucketIterator.splits(
     (train, valid, test),
     batch_sizes = (args.bsz, args.ebsz, args.ebsz),
-    device = device,
-    repeat = False,
-    sort_within_batch = True,
-)
-full_train_iter = RandomIterator(
-    dataset = train,
-    batch_size = args.ebsz,
-    device = device,
-    repeat = False,
-    sort_within_batch = True,
-    train = False,
-)
-
-asp_iterator = BucketIterator
-asp_train, asp_valid, asp_test = data.SentihoodDataset.splits(
-    TEXT, LOCATION, ASPECT, SENTIMENT, flat=False, path=args.filepath)
-asp_train_iter, asp_valid_iter, asp_test_iter = asp_iterator.splits(
-    (asp_train, asp_valid, asp_test),
-    batch_size = args.ebsz,
     device = device,
     repeat = False,
     sort_within_batch = True,
@@ -133,7 +110,6 @@ if args.model == "lstmfinal":
     assert(args.flat_data)
     model = LstmFinal(
         V       = TEXT.vocab,
-        L       = LOCATION.vocab if LOCATION is not None else None,
         A       = ASPECT.vocab,
         S       = SENTIMENT.vocab,
         emb_sz  = args.emb_sz,
@@ -145,7 +121,6 @@ elif args.model == "crflstmdiag":
     assert(args.flat_data)
     model = CrfLstmDiag(
         V       = TEXT.vocab,
-        L       = LOCATION.vocab if LOCATION is not None else None,
         A       = ASPECT.vocab,
         S       = SENTIMENT.vocab,
         emb_sz  = args.emb_sz,
@@ -157,7 +132,6 @@ elif args.model == "crfemblstm":
     assert(args.flat_data)
     model = CrfEmbLstm(
         V       = TEXT.vocab,
-        L       = LOCATION.vocab if LOCATION is not None else None,
         A       = ASPECT.vocab,
         S       = SENTIMENT.vocab,
         emb_sz  = args.emb_sz,
@@ -169,7 +143,6 @@ elif args.model == "crflstmlstm":
     assert(args.flat_data)
     model = CrfLstmLstm(
         V       = TEXT.vocab,
-        L       = LOCATION.vocab if LOCATION is not None else None,
         A       = ASPECT.vocab,
         S       = SENTIMENT.vocab,
         emb_sz  = args.emb_sz,
@@ -181,7 +154,6 @@ elif args.model == "crfneg":
     assert(args.flat_data)
     model = CrfNeg(
         V       = TEXT.vocab,
-        L       = LOCATION.vocab if LOCATION is not None else None,
         A       = ASPECT.vocab,
         S       = SENTIMENT.vocab,
         emb_sz  = args.emb_sz,
@@ -192,7 +164,6 @@ elif args.model == "crfneg":
 elif args.model == "crfsimple":
     model = CrfSimple(
         V       = TEXT.vocab,
-        L       = LOCATION.vocab,
         A       = ASPECT.vocab,
         S       = SENTIMENT.vocab,
         emb_sz  = args.emb_sz,
@@ -226,20 +197,20 @@ for e in range(args.epochs):
     valid_loss, ntok = model.validate(valid_iter)
 
     # Accuracy on train
-    train_acc = model.acc(full_train_iter)
+    train_acc = model.acc(train_iter)
     # Accuracy on Valid
-    valid_acc = model.acc(valid_iter, skip0=True)
-    valid_f1 = model.f1(asp_valid_iter)
-    test_acc = model.acc(test_iter, skip0=True)
-    test_f1 = model.f1(asp_test_iter)
+    valid_acc = model.acc(valid_iter, skip0=False)
+    #valid_f1 = model.f1(asp_valid_iter)
+    test_acc = model.acc(test_iter, skip0=False)
+    #test_f1 = model.f1(asp_test_iter)
 
     # Report
     print(f"Epoch {e}")
     print(f"train loss: {train_loss / tntok} train acc: {train_acc}")
-    print(f"valid loss: {valid_loss / ntok} valid acc: {valid_acc} valid f1: {valid_f1}")
-    print(f"test acc: {test_acc} test f1: {test_f1}")
+    print(f"valid loss: {valid_loss / ntok} valid acc: {valid_acc}")# valid f1: {valid_f1}")
+    print(f"test acc: {test_acc}")# test f1: {test_f1}")
 
     if args.save and valid_acc > best_val:
         best_val = valid_acc
-        savestring = f"saves/{args.model}/{args.model}-lr{args.lr}-nl{args.nlayers}-rnnsz{args.rnn_sz}-dp{args.dp}-va{valid_acc}-vf{valid_f1}-ta{test_acc}-tf{test_f1}.pt"
+        savestring = f"saves/{args.model}/{args.model}-lr{args.lr}-nl{args.nlayers}-rnnsz{args.rnn_sz}-dp{args.dp}-va{valid_acc}-ta{test_acc}.pt"
         torch.save(model, savestring)

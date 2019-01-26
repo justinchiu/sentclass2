@@ -49,10 +49,10 @@ def get_all_opinions(opinions, text=None):
 def make_fields():
     SENTIMENT = Field(lower=True, is_target=True, unk_token=None, pad_token=None, batch_first=True)
     ASPECT = Field(lower=True, is_target=True, unk_token=None, pad_token=None, batch_first=True)
-    TEXT = Field(
-        lower=True, include_lengths=True, is_target=True, batch_first=True)
+    TEXT = Field(tokenize="spacy",
+        lower=True, include_lengths=True, is_target=True, batch_first=True, init_token="<bos>", eos_token="<eos>")
         #lower=True, include_lengths=True, init_token="<bos>", eos_token="<eos>", is_target=True)
-    return TEXT, None, ASPECT, SENTIMENT
+    return TEXT, ASPECT, SENTIMENT
 
 def build_vocab(f1, f2, f3, d1, d2, d3):
     f1.build_vocab(d1, d2, d3)
