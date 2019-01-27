@@ -82,9 +82,9 @@ class CrfNeg(Sent):
             torch.zeros(len(self.S), len(self.S))
         )
         self.flip.requires_grad = False
-        self.flip.data[0,0] = 1
-        self.flip.data[1,2] = 1
-        self.flip.data[2,1] = 1
+        self.flip.data[0,1] = 1
+        self.flip.data[1,0] = 1
+        self.flip.data[2,2] = 1
         self.fm1= nn.Parameter(
             torch.FloatTensor([
                 1, 0, 0,
@@ -153,8 +153,8 @@ class CrfNeg(Sent):
             phi_s, phi_neg, psi_ybs, phi_y, batch_dims="t", modulo_total=True)
         if self.training:
             self._N += 1
-        #if self._N > 1000 and self.training:
-        if self._N > 100 and self.training:
+        if self._N > 1000 and self.training:
+        #if self._N > 100 and self.training:
             Zt, hx, hb = ubersum(
                 "nts,ntb,ntybs,ny->nt,nts,ntb",
                 phi_s, phi_neg, psi_ybs, phi_y, batch_dims="t", modulo_total=True)
@@ -162,9 +162,9 @@ class CrfNeg(Sent):
             bp = (hb - Zt.unsqueeze(-1)).exp()
             yp = (hy - Z.unsqueeze(-1)).exp()
             def stuff(i):
-                loc = self.L.itos[l[i]]
+                #loc = self.L.itos[l[i]]
                 asp = self.A.itos[a[i]]
-                return self.tostr(words[i]), loc, asp, xp[i], yp[i], bp[i]
+                return self.tostr(words[i]), None, asp, xp[i], yp[i], bp[i]
             import pdb; pdb.set_trace()
             # wordsi, loc, asp, xpi, ypi, bpi = stuff(10)
         return hy
