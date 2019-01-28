@@ -41,7 +41,7 @@ class Sent(nn.Module):
 
                 #lx, _ = batch.locations_text
                 #ax, _ = batch.aspects_text
-                a = batch.aspects if self.init_state else None
+                a = batch.aspects if self.outer_plate else None
                 l = None
                 y = batch.label
 
@@ -98,7 +98,7 @@ class Sent(nn.Module):
             for i, batch in enumerate(iter):
                 x, lens = batch.text
 
-                a = batch.aspects if self.init_state else None
+                a = batch.aspects if self.outer_plate else None
                 l = None
                 y = batch.label
                 N = y.shape[0]

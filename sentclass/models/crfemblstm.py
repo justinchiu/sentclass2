@@ -73,10 +73,9 @@ class CrfEmbLstm(Sent):
             out_features = len(S),
             bias = False,
         )
-        import pdb; pdb.set_trace()
 
 
-    def forward(self, x, lens, k, kx):
+    def forward(self, x, lens, a, l):
         # model takes as input the text, aspect, and location
         # runs BLSTM over text using embedding(location, aspect) as
         # the initial hidden state, as opposed to a different lstm for every pair???
@@ -88,33 +87,47 @@ class CrfEmbLstm(Sent):
         emb = self.drop(self.lut(x))
         p_emb = pack(emb, lens, True)
 
-        l, a = k
         N = x.shape[0]
         T = x.shape[1]
 
-        y_idx = l * len(self.A) + a if self.L is not None else a
-        s = (self.lut_la(y_idx)
-            .view(N, 2, 2 * self.nlayers, self.rnn_sz)
-            .permute(1, 2, 0, 3)
-            .contiguous())
-        state = (s[0], s[1])
+        state = None
+        if self.outer_plate:
+            y_idx = l * len(self.A) + a if self.L is not None else a
+            s = (self.lut_la(y_idx)
+                .view(N, 2, 2 * self.nlayers, self.rnn_sz)
+                .permute(1, 2, 0, 3)
+                .contiguous())
+            state = (s[0], s[1])
         x, (h, c) = self.rnn(p_emb, state)
         # h: L * D x N x H
         x = unpack(x, True)[0]
-        proj_s = self.proj_s[y_idx.squeeze(-1)]
-        phi_s = torch.einsum("nsh,nth->nts", [proj_s, emb])
+        # initialize
+        phi_s = None
+        if self.outer_plate:
+            proj_s = self.proj_s[y_idx.squeeze(-1)]
+            phi_s = torch.einsum("nsh,nth->nts", [proj_s, emb])
+        else:
+            phi_s = self.proj_s(emb)
 
         idxs = torch.arange(0, max(lens)).to(lens.device)
         # mask: N x R x 1
         mask = (idxs.repeat(len(lens), 1) >= lens.unsqueeze(-1))
         phi_y = torch.zeros(N, len(self.S)).to(self.lut.weight.device)
         psi_ys = self.proj_ys(x).view(N, T, len(self.S)-1, len(self.S)-1)
-        left = torch.zeros(N, T, 1, len(self.S)-1).to(psi_ys)
+        #left = torch.zeros(N, T, 1, len(self.S)-1).to(psi_ys)
+        right = torch.zeros(N, T, len(self.S)-1, 1).to(psi_ys)
+        """
         top = torch.cat(
             [self.psi_none, torch.zeros(len(self.S)-1).to(psi_ys)],
             0,
         ).view(1,1,len(self.S),1).expand(N,T,len(self.S),1)
-        psi_ys = torch.cat([top, torch.cat([left, psi_ys], -2)], -1)
+        """
+        bottom = torch.cat(
+            [torch.zeros(len(self.S)-1).to(psi_ys), self.psi_none],
+            0,
+        ).view(1,1,1,len(self.S)).expand(N,T,1,len(self.S))
+        #psi_ys = torch.cat([top, torch.cat([left, psi_ys], -2)], -1)
+        psi_ys = torch.cat([torch.cat([psi_ys, right], -1), bottom], -2)
         # mask phi_s, psi_ys...actually these are mostly unnecessary
         phi_s.masked_fill_(mask.unsqueeze(-1), 0) 
         psi_ys = psi_ys.masked_fill_(mask.view(N, T, 1, 1), 0)
