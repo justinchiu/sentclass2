@@ -22,16 +22,10 @@ class CrfNeg(Sent):
         nlayers = 2,
         dp = 0.3,
     ):
-        super(CrfNeg, self).__init__()
+        super(CrfNeg, self).__init__(V, L, A, S)
 
-        self._N = 0
-
-        self.V = V
-        self.L = L
-        self.A = A
-        self.S = S
-        if L is None:
-            L = [1]
+        num_loc = len(L) if L is not None else 1
+        num_asp = len(A) if A is not None else 1
 
         self.emb_sz = emb_sz
         self.rnn_sz = rnn_sz
@@ -46,10 +40,11 @@ class CrfNeg(Sent):
         self.lut.weight.data.copy_(V.vectors)
         self.lut.weight.data[V.stoi[self.PAD]] = 0
         self.lut.weight.requires_grad = False
-        self.lut_la = nn.Embedding(
-            num_embeddings = len(L) * len(A),
-            embedding_dim = nlayers * 2 * 2 * rnn_sz,
-        )
+        if self.outer_plate:
+            self.lut_la = nn.Embedding(
+                num_embeddings = num_loc * num_asp,
+                embedding_dim = nlayers * 2 * 2 * rnn_sz,
+            )
         self.rnn = nn.LSTM(
             input_size    = emb_sz,
             hidden_size   = rnn_sz,
@@ -62,7 +57,7 @@ class CrfNeg(Sent):
         stride = 5
         self.conv = nn.Conv1d(
             in_channels = emb_sz,
-            out_channels = len(L) * len(A) * 2*rnn_sz,
+            out_channels = num_loc*num_asp * 2*rnn_sz,
             kernel_size = stride,
             padding= math.floor(stride / 2),
             stride = 1,
@@ -72,19 +67,24 @@ class CrfNeg(Sent):
 
         # Score each sentiment for each location and aspect
         # Store the combined pos, neg, none in a single vector :(
-        self.proj_s = nn.Parameter(torch.randn(len(L)*len(A), len(S), emb_sz))
-        self.proj_s.data[:,:,self.S.stoi["none"]].mul_(2)
-        self.proj_neg = nn.Parameter(torch.randn(len(L)*len(A), 2, 2*rnn_sz))
+        if self.outer_plate:
+            self.proj_s = nn.Parameter(torch.randn(len(L)*len(A), len(S), emb_sz))
+            self.proj_s.data[:,:,self.S.stoi["none"]].mul_(2)
+            self.proj_neg = nn.Parameter(torch.randn(len(L)*len(A), 2, 2*rnn_sz))
+        else:
+            self.proj_s = nn.Linear(emb_sz, len(S))
+            self.proj_neg = nn.Linear(2*rnn_sz, 2)
         self.psi_ys = nn.Parameter(torch.FloatTensor([0.1, 0.1, 0.1]))
         self.phi_b = nn.Parameter(torch.FloatTensor([0.8, 0.2]))
         #self.phi_b.requires_grad = False
         self.flip = nn.Parameter(
-            torch.zeros(len(self.S), len(self.S))
+            torch.Tensor([
+                [0, 1, 0],
+                [1, 0, 0],
+                [0, 0, 1],
+            ])
         )
         self.flip.requires_grad = False
-        self.flip.data[0,1] = 1
-        self.flip.data[1,0] = 1
-        self.flip.data[2,2] = 1
         self.fm1= nn.Parameter(
             torch.FloatTensor([
                 1, 0, 0,
@@ -102,34 +102,43 @@ class CrfNeg(Sent):
         )
         self.fm2.requires_grad = False
 
-    def forward(self, x, lens, k, kx):
+    def forward(self, x, lens, a, l):
         words = x
 
         emb = self.drop(self.lut(x))
         p_emb = pack(emb, lens, True)
 
-        l, a = k
         N = x.shape[0]
         T = x.shape[1]
-        y_idx = l * len(self.A) + a if self.L is not None else a
-        s = (self.lut_la(y_idx)
-            .view(N, 2, 2 * self.nlayers, self.rnn_sz)
-            .permute(1, 2, 0, 3)
-            .contiguous())
-        state = (s[0], s[1])
+
+        state = None
+        if self.outer_plate:
+            y_idx = l * len(self.A) + a if self.L is not None else a
+            s = (self.lut_la(y_idx)
+                .view(N, 2, 2 * self.nlayers, self.rnn_sz)
+                .permute(1, 2, 0, 3)
+                .contiguous())
+            state = (s[0], s[1])
         x, (h, c) = self.rnn(p_emb, state)
         # h: L * D x N x H
         x = unpack(x, True)[0]
         #import pdb; pdb.set_trace()
-        proj_s = self.proj_s[y_idx.squeeze(-1)]
-        phi_s = torch.einsum("nsh,nth->nts", [proj_s, emb])
-        proj_neg = self.proj_neg[y_idx.squeeze(-1)]
-        phi_neg = torch.einsum("nbh,nth->ntb", [proj_neg, x])
+
+        phi_s, phi_neg = None, None
+        if self.outer_plate:
+            proj_s = self.proj_s[y_idx.squeeze(-1)]
+            phi_s = torch.einsum("nsh,nth->nts", [proj_s, emb])
+            proj_neg = self.proj_neg[y_idx.squeeze(-1)]
+            phi_neg = torch.einsum("nbh,nth->ntb", [proj_neg, x])
+        else:
+            phi_s = self.proj_s(emb)
+            phi_neg = self.proj_neg(x)
         # CONV
-        c = (self.conv(emb.transpose(-1, -2))
-            .transpose(-1, -2)
-            .view(N,T,-1,2*self.rnn_sz))#[:,:,y_idx.squeeze(-1),:]
-        cy = c.gather(2, y_idx.view(N,1,1,1).expand(N,T,1,100)).squeeze(-2)
+        if self.outer_plate:
+            c = (self.conv(emb.transpose(-1, -2))
+                .transpose(-1, -2)
+                .view(N,T,-1,2*self.rnn_sz))#[:,:,y_idx.squeeze(-1),:]
+            cy = c.gather(2, y_idx.view(N,1,1,1).expand(N,T,1,100)).squeeze(-2)
         #phi_neg = torch.einsum("nbh,nth->ntb", [proj_neg, cy])
         # /CONV
         # add prior
@@ -153,8 +162,8 @@ class CrfNeg(Sent):
             phi_s, phi_neg, psi_ybs, phi_y, batch_dims="t", modulo_total=True)
         if self.training:
             self._N += 1
-        if self._N > 1000 and self.training:
-        #if self._N > 100 and self.training:
+        #if self._N > 1000 and self.training:
+        if self._N > 100 and self.training:
             Zt, hx, hb = ubersum(
                 "nts,ntb,ntybs,ny->nt,nts,ntb",
                 phi_s, phi_neg, psi_ybs, phi_y, batch_dims="t", modulo_total=True)
@@ -163,7 +172,7 @@ class CrfNeg(Sent):
             yp = (hy - Z.unsqueeze(-1)).exp()
             def stuff(i):
                 #loc = self.L.itos[l[i]]
-                asp = self.A.itos[a[i]]
+                asp = self.A and self.A.itos[a[i]]
                 return self.tostr(words[i]), None, asp, xp[i], yp[i], bp[i]
             import pdb; pdb.set_trace()
             # wordsi, loc, asp, xpi, ypi, bpi = stuff(10)
