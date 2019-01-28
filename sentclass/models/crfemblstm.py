@@ -20,16 +20,7 @@ class CrfEmbLstm(Sent):
         nlayers = 2,
         dp = 0.3,
     ):
-        super(CrfEmbLstm, self).__init__()
-
-        self._N = 0
-
-        self.V = V
-        self.L = L
-        self.A = A
-        self.S = S
-        if L is None:
-            L = [1]
+        super(CrfEmbLstm, self).__init__(V, L, A, S)
 
         self.emb_sz = emb_sz
         self.rnn_sz = rnn_sz

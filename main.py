@@ -4,10 +4,11 @@ import argparse
 import torch
 import torch.optim as optim
 
-from torchtext.data import BucketIterator
+import torchtext
+from torchtext.data import BucketIterator, Field
 from torchtext.vocab import GloVe
 
-from sentclass.models.lstmfinal import LstmFinal
+from sentclass.models.lstm import Lstm
 from sentclass.models.crflstmdiag import CrfLstmDiag
 from sentclass.models.crfemblstm import CrfEmbLstm
 from sentclass.models.crflstmlstm import CrfLstmLstm
@@ -29,7 +30,9 @@ def get_args():
     parser.add_argument("--devid", default=-1, type=int)
 
     parser.add_argument("--flat-data", action="store_true", default=False)
-    parser.add_argument("--data", choices=["semeval",]) 
+    parser.add_argument("--data", choices=["semeval", "sst"]) 
+    parser.add_argument("--fine-grained", action="store_true") 
+    parser.add_argument("--train-subtrees", action="store_true") 
 
     parser.add_argument("--bsz", default=33, type=int)
     parser.add_argument("--ebsz", default=150, type=int)
@@ -60,7 +63,9 @@ def get_args():
     parser.add_argument(
         "--model",
         choices=[
-            "lstmfinal", "crflstmdiag", "crfemblstm", "crflstmlstm", "crfneg",
+            "lstmmax", "lstmfinal",
+            "crflstmdiag", "crfemblstm", "crflstmlstm",
+            "crfneg",
         ],
         default="lstmfinal"
     )
@@ -86,15 +91,29 @@ torch.cuda.manual_seed(args.seed)
 device = torch.device(f"cuda:{args.devid}" if args.devid >= 0 else "cpu")
 
 # Data
-import sentclass.semeval as data
+TEXT, ASPECT, SENTIMENT, train, valid, test = None, None, None, None, None, None
+if args.data == "semeval":
+    import sentclass.semeval as data
 
-TEXT, ASPECT, SENTIMENT = data.make_fields()
-train, valid, test = data.SemevalDataset.splits(
-    TEXT, ASPECT, SENTIMENT, flat=args.flat_data, path=args.filepath,
-    train="acsa_train.json.train", validation="acsa_train.json.valid", test="acsa_test.json",
-)
-
-data.build_vocab(TEXT, ASPECT, SENTIMENT, train, valid, test)
+    TEXT, ASPECT, SENTIMENT = data.make_fields()
+    train, valid, test = data.SemevalDataset.splits(
+        TEXT, ASPECT, SENTIMENT, flat=args.flat_data, path=args.filepath,
+        train="acsa_train.json.train", validation="acsa_train.json.valid", test="acsa_test.json",
+    )
+    data.build_vocab(TEXT, ASPECT, SENTIMENT, train, valid, test)
+elif args.data == "sst":
+    TEXT, SENTIMENT = (
+        Field(tokenize="spacy", lower=True, include_lengths=True, batch_first=True, init_token="<bos>", eos_token="<eos>"),
+        Field(lower=True, is_target=True, unk_token=None, pad_token=None, batch_first=True,),
+    )
+    train, valid, test = torchtext.datasets.SST.splits(
+        TEXT, SENTIMENT, 
+        fine_grained = args.fine_grained,
+        train_subtrees = args.train_subtrees,
+        #filter_pred=lambda ex: ex.label[0] != 'neutral',
+    )
+    TEXT.build_vocab(train, valid, test)
+    SENTIMENT.build_vocab(train)
 TEXT.vocab.load_vectors(vectors=GloVe(name="840B"))
 
 train_iter, valid_iter, test_iter = BucketIterator.splits(
@@ -108,10 +127,23 @@ train_iter, valid_iter, test_iter = BucketIterator.splits(
 # Model
 if args.model == "lstmfinal":
     assert(args.flat_data)
-    model = LstmFinal(
+    model = Lstm(
         V       = TEXT.vocab,
-        A       = ASPECT.vocab,
+        A       = ASPECT and ASPECT.vocab,
         S       = SENTIMENT.vocab,
+        final   = True,
+        emb_sz  = args.emb_sz,
+        rnn_sz  = args.rnn_sz,
+        nlayers = args.nlayers,
+        dp      = args.dp,
+    )
+elif args.model == "lstmmax":
+    assert(args.flat_data)
+    model = Lstm(
+        V       = TEXT.vocab,
+        A       = ASPECT and ASPECT.vocab,
+        S       = SENTIMENT.vocab,
+        final   = False,
         emb_sz  = args.emb_sz,
         rnn_sz  = args.rnn_sz,
         nlayers = args.nlayers,
@@ -121,7 +153,7 @@ elif args.model == "crflstmdiag":
     assert(args.flat_data)
     model = CrfLstmDiag(
         V       = TEXT.vocab,
-        A       = ASPECT.vocab,
+        A       = ASPECT and ASPECT.vocab,
         S       = SENTIMENT.vocab,
         emb_sz  = args.emb_sz,
         rnn_sz  = args.rnn_sz,
@@ -132,7 +164,7 @@ elif args.model == "crfemblstm":
     assert(args.flat_data)
     model = CrfEmbLstm(
         V       = TEXT.vocab,
-        A       = ASPECT.vocab,
+        A       = ASPECT and ASPECT.vocab,
         S       = SENTIMENT.vocab,
         emb_sz  = args.emb_sz,
         rnn_sz  = args.rnn_sz,
@@ -143,7 +175,7 @@ elif args.model == "crflstmlstm":
     assert(args.flat_data)
     model = CrfLstmLstm(
         V       = TEXT.vocab,
-        A       = ASPECT.vocab,
+        A       = ASPECT and ASPECT.vocab,
         S       = SENTIMENT.vocab,
         emb_sz  = args.emb_sz,
         rnn_sz  = args.rnn_sz,
@@ -154,17 +186,7 @@ elif args.model == "crfneg":
     assert(args.flat_data)
     model = CrfNeg(
         V       = TEXT.vocab,
-        A       = ASPECT.vocab,
-        S       = SENTIMENT.vocab,
-        emb_sz  = args.emb_sz,
-        rnn_sz  = args.rnn_sz,
-        nlayers = args.nlayers,
-        dp      = args.dp,
-    )
-elif args.model == "crfsimple":
-    model = CrfSimple(
-        V       = TEXT.vocab,
-        A       = ASPECT.vocab,
+        A       = ASPECT and ASPECT.vocab,
         S       = SENTIMENT.vocab,
         emb_sz  = args.emb_sz,
         rnn_sz  = args.rnn_sz,

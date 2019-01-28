@@ -20,16 +20,10 @@ class CrfLstmDiag(Sent):
         nlayers = 2,
         dp = 0.3,
     ):
-        super(CrfLstmDiag, self).__init__()
+        super(CrfLstmDiag, self).__init__(V, L, A, S)
 
-        self._N = 0
-
-        self.V = V
-        self.L = L
-        self.A = A
-        self.S = S
-        if L is None:
-            L = [1]
+        num_loc = len(L) if L is not None else 1
+        num_asp = len(A) if A is not None else 1
 
         self.emb_sz = emb_sz
         self.rnn_sz = rnn_sz
@@ -43,10 +37,11 @@ class CrfLstmDiag(Sent):
         )
         self.lut.weight.data.copy_(V.vectors)
         self.lut.weight.requires_grad = False
-        self.lut_la = nn.Embedding(
-            num_embeddings = len(L) * len(A),
-            embedding_dim = nlayers * 2 * 2 * rnn_sz,
-        )
+        if self.init_state:
+            self.lut_la = nn.Embedding(
+                num_embeddings = num_asp * num_loc,
+                embedding_dim = nlayers * 2 * 2 * rnn_sz,
+            )
         self.rnn = nn.LSTM(
             input_size = emb_sz,
             hidden_size = rnn_sz,
@@ -69,27 +64,27 @@ class CrfLstmDiag(Sent):
         self.psi_ys = nn.Parameter(torch.FloatTensor([0.1, 0.1, 0.1]))
 
 
-    def forward(self, x, lens, k, kx):
+    def forward(self, x, lens, a, l):
         # model takes as input the text, aspect, and location
         # runs BLSTM over text using embedding(location, aspect) as
         # the initial hidden state, as opposed to a different lstm for every pair???
         # output sentiment
 
         # DBG
+        N, T = x.shape
         words = x
 
         emb = self.drop(self.lut(x))
         p_emb = pack(emb, lens, True)
 
-        l, a = k
-        N = x.shape[0]
-        T = x.shape[1]
-        y_idx = l * len(self.A) + a if self.L is not None else a
-        s = (self.lut_la(y_idx)
-            .view(N, 2, 2 * self.nlayers, self.rnn_sz)
-            .permute(1, 2, 0, 3)
-            .contiguous())
-        state = (s[0], s[1])
+        state = None
+        if self.init_state:
+            y_idx = l * len(self.A) + a if self.L is not None else a
+            s = (self.lut_la(y_idx)
+                .view(N, 2, 2 * self.nlayers, self.rnn_sz)
+                .permute(1, 2, 0, 3)
+                .contiguous())
+            state = (s[0], s[1])
         x, (h, c) = self.rnn(p_emb, state)
         # h: L * D x N x H
         x = unpack(x, True)[0]

@@ -72,7 +72,7 @@ class SemevalExample(Example):
             setattr(ex, "text", text_field.preprocess(x["sentence"]))
             setattr(ex, "aspects", aspect_field.preprocess(x["aspect"]))
             setattr(ex, "aspects_text", text_field.preprocess(x["aspect"]))
-            setattr(ex, "sentiments", sentiment_field.preprocess(x["sentiment"]))
+            setattr(ex, "label", sentiment_field.preprocess(x["sentiment"]))
 
             setattr(ex, "locations", aspect_field.preprocess("1"))
             setattr(ex, "locations_text", text_field.preprocess("1"))
@@ -99,7 +99,7 @@ class SemevalFlatExample(Example):
             setattr(ex, "text", text_field.preprocess(x["sentence"]))
             setattr(ex, "aspects", aspect_field.preprocess(x["aspect"]))
             setattr(ex, "aspects_text", text_field.preprocess(x["aspect"]))
-            setattr(ex, "sentiments", sentiment_field.preprocess(x["sentiment"]))
+            setattr(ex, "label", sentiment_field.preprocess(x["sentiment"]))
 
             setattr(ex, "locations", aspect_field.preprocess("1"))
             setattr(ex, "locations_text", text_field.preprocess("1"))
@@ -132,7 +132,7 @@ class SemevalDataset(Dataset):
             ("aspects_text", text_field),
             ("locations", text_field),
             ("locations_text", text_field),
-            ("sentiments", sentiment_field),
+            ("label", sentiment_field),
             ("text", text_field),
         ]
 

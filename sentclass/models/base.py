@@ -12,6 +12,17 @@ from torch.nn.utils import clip_grad_norm_ as clip_
 class Sent(nn.Module):
     PAD = "<pad>"
 
+    def __init__(self, V, L, A, S):
+        super(Sent, self).__init__()
+
+        self._N = 0
+        self.init_state = A is not None and L is not None
+        self.V = V
+        self.L = L
+        self.A = A
+        self.S = S
+
+
     def _loop(self, diter, optimizer=None, clip=0, learn=False, re=None, once=False):
         context = torch.enable_grad if learn else torch.no_grad
 
@@ -28,18 +39,13 @@ class Sent(nn.Module):
                     optimizer.zero_grad()
                 x, lens = batch.text
 
-                lx, _ = batch.locations_text
-                ax, _ = batch.aspects_text
-                l = batch.locations
-                a = batch.aspects
-                y = batch.sentiments
+                #lx, _ = batch.locations_text
+                #ax, _ = batch.aspects_text
+                a = batch.aspects if self.init_state else None
+                l = None
+                y = batch.label
 
-                # keys 
-                k = [l, a]
-                kx = [lx, ax]
-
-                # N x y for dealing w imbalance
-                logits = self(x, lens, k, kx)
+                logits = self(x, lens, a, l)
 
                 nll = self.loss(logits, y)
                 nelbo = nll
@@ -92,20 +98,14 @@ class Sent(nn.Module):
             for i, batch in enumerate(iter):
                 x, lens = batch.text
 
-                l = batch.locations
-                a = batch.aspects
-                lx = batch.locations_text
-                ax = batch.aspects_text
-                y = batch.sentiments
+                a = batch.aspects if self.init_state else None
+                l = None
+                y = batch.label
                 N = y.shape[0]
                 # Aspects: 7, 8, 12, 16, or first 4
 
-                # keys 
-                k = [l, a]
-                kx = [lx, ax]
-
                 # N x l x a x y
-                logits = self(x, lens, k, kx)
+                logits = self(x, lens, a, l)
                 _, hy = logits.view(N, -1, len(self.S)).max(-1)
 
                 if skip0:
@@ -130,10 +130,7 @@ class Sent(nn.Module):
             for i, batch in enumerate(iter):
                 x, lens = batch.text
 
-                l = batch.locations
-                a = batch.aspects
-                lx, _ = batch.locations_text
-                ax, _ = batch.aspects_text
+                a = batch.aspects if self.init_state else None
                 y = batch.sentiments
                 N = y.shape[0]
                 # Aspects: 7, 8, 12, 16, or first 4
@@ -145,7 +142,7 @@ class Sent(nn.Module):
                     kx = [lx[:,j], ax[:,j]]
 
                     # N x l x a x y
-                    logits = self(x, lens, k, kx)
+                    logits = self(x, lens, a)
                     _, hy = logits.view(N, -1, 3).max(-1)
                     hys.append(hy)
                 hy = torch.cat(hys, dim=-1)
