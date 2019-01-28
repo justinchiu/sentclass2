@@ -22,6 +22,9 @@ class CrfEmbLstm(Sent):
     ):
         super(CrfEmbLstm, self).__init__(V, L, A, S)
 
+        num_loc = len(L) if L is not None else 1
+        num_asp = len(A) if A is not None else 1
+
         self.emb_sz = emb_sz
         self.rnn_sz = rnn_sz
         self.nlayers = nlayers
@@ -35,10 +38,11 @@ class CrfEmbLstm(Sent):
         self.lut.weight.data.copy_(V.vectors)
         self.lut.weight.data[V.stoi[self.PAD]] = 0
         self.lut.weight.requires_grad = False
-        self.lut_la = nn.Embedding(
-            num_embeddings = len(L) * len(A),
-            embedding_dim = nlayers * 2 * 2 * rnn_sz,
-        )
+        if self.outer_plate:
+            self.lut_la = nn.Embedding(
+                num_embeddings = num_loc * num_asp,
+                embedding_dim = nlayers * 2 * 2 * rnn_sz,
+            )
         self.rnn = nn.LSTM(
             input_size    = emb_sz,
             hidden_size   = rnn_sz,
@@ -52,8 +56,11 @@ class CrfEmbLstm(Sent):
 
         # Score each sentiment for each location and aspect
         # Store the combined pos, neg, none in a single vector :(
-        self.proj_s = nn.Parameter(torch.randn(len(L)*len(A), len(S), emb_sz))
-        self.proj_s.data[:,:,self.S.stoi["none"]].mul_(2)
+        if self.outer_plate:
+            self.proj_s = nn.Parameter(torch.randn(num_loc*num_asp, len(S), emb_sz))
+            #self.proj_s.data[:,:,self.S.stoi["none"]].mul_(2)
+        else:
+            self.proj_s = nn.Linear(emb_sz, len(S))
         # only let non-neutral interact with non-neutral
         self.psi_none = nn.Parameter(torch.FloatTensor([0.1]))
         self.proj_ys = nn.Linear(
@@ -66,6 +73,7 @@ class CrfEmbLstm(Sent):
             out_features = len(S),
             bias = False,
         )
+        import pdb; pdb.set_trace()
 
 
     def forward(self, x, lens, k, kx):

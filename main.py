@@ -1,3 +1,4 @@
+# python main.py --flat-data --devid 0 --data sst --fine-grain --ebsz 512 --rnn-sz 256 --lr 0.01 --dp 0.2  --model lstmmax --bsz 128
  
 import argparse
 

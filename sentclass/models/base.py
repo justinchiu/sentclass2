@@ -16,7 +16,7 @@ class Sent(nn.Module):
         super(Sent, self).__init__()
 
         self._N = 0
-        self.init_state = A is not None and L is not None
+        self.outer_plate = A is not None or L is not None
         self.V = V
         self.L = L
         self.A = A

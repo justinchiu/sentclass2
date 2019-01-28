@@ -39,7 +39,7 @@ class Lstm(Sent):
         self.lut.weight.requires_grad = False
         self.lut.weight.data[2].copy_(torch.randn(emb_sz))
         self.lut.weight.data[3].copy_(torch.randn(emb_sz))
-        if self.init_state:
+        if self.outer_plate:
             self.lut_la = nn.Embedding(
                 num_embeddings = num_loc * num_asp,
                 embedding_dim = nlayers * 2 * 2 * rnn_sz,
@@ -80,7 +80,7 @@ class Lstm(Sent):
         N, T = x.shape
 
         state = None
-        if self.init_state:
+        if self.outer_plate:
             y_idx = l * len(self.A) + a if self.L is not None else a
             s = (self.lut_la(y_idx)
                 .view(N, 2, 2 * self.nlayers, self.rnn_sz)

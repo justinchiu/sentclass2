@@ -37,7 +37,7 @@ class CrfLstmDiag(Sent):
         )
         self.lut.weight.data.copy_(V.vectors)
         self.lut.weight.requires_grad = False
-        if self.init_state:
+        if self.outer_plate:
             self.lut_la = nn.Embedding(
                 num_embeddings = num_asp * num_loc,
                 embedding_dim = nlayers * 2 * 2 * rnn_sz,
@@ -78,7 +78,7 @@ class CrfLstmDiag(Sent):
         p_emb = pack(emb, lens, True)
 
         state = None
-        if self.init_state:
+        if self.outer_plate:
             y_idx = l * len(self.A) + a if self.L is not None else a
             s = (self.lut_la(y_idx)
                 .view(N, 2, 2 * self.nlayers, self.rnn_sz)
