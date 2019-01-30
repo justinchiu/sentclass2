@@ -1,6 +1,7 @@
 import math
 
 from .base import Sent
+from .crfneg import CrfNeg
 from .. import sentihood as data
 
 import torch
@@ -10,7 +11,7 @@ from torch.nn.utils.rnn import pad_packed_sequence as unpack
 
 from pyro.ops.contract import ubersum
 
-class CrfNeg(Sent):
+class CrfNegT(CrfNeg):
     def __init__(
         self,
         V = None,
@@ -22,48 +23,10 @@ class CrfNeg(Sent):
         nlayers = 2,
         dp = 0.3,
     ):
-        super(CrfNeg, self).__init__(V, L, A, S)
+        super(CrfNegT, self).__init__(V, L, A, S, emb_sz, rnn_sz, nlayers, dp)
 
         num_loc = len(L) if L is not None else 1
         num_asp = len(A) if A is not None else 1
-
-        self.emb_sz = emb_sz
-        self.rnn_sz = rnn_sz
-        self.nlayers = nlayers
-        self.dp = dp
-
-        self.lut = nn.Embedding(
-            num_embeddings = len(V),
-            embedding_dim = emb_sz,
-            padding_idx = V.stoi[self.PAD],
-        )
-        self.lut.weight.data.copy_(V.vectors)
-        self.lut.weight.data[V.stoi[self.PAD]] = 0
-        self.lut.weight.requires_grad = False
-        if self.outer_plate:
-            self.lut_la = nn.Embedding(
-                num_embeddings = num_loc * num_asp,
-                embedding_dim = nlayers * 2 * 2 * rnn_sz,
-            )
-        self.rnn = nn.LSTM(
-            input_size    = emb_sz,
-            hidden_size   = rnn_sz,
-            num_layers    = nlayers,
-            bias          = True,
-            dropout       = dp,
-            bidirectional = True,
-            batch_first   = True,
-        )
-        stride = 5
-        self.conv = nn.Conv1d(
-            in_channels = emb_sz,
-            out_channels = num_loc*num_asp * 2*rnn_sz,
-            kernel_size = stride,
-            padding= math.floor(stride / 2),
-            stride = 1,
-            bias = False,
-        )
-        self.drop = nn.Dropout(dp)
 
         # Score each sentiment for each location and aspect
         # Store the combined pos, neg, none in a single vector :(
@@ -76,7 +39,7 @@ class CrfNeg(Sent):
             self.proj_neg = nn.Linear(2*rnn_sz, 2)
         self.psi_ys = nn.Parameter(torch.FloatTensor([0.1, 0.1, 0.1]))
         #self.phi_b = nn.Parameter(torch.FloatTensor([0.8, 0.2]))
-        self.phi_b = nn.Parameter(torch.FloatTensor([1, 0.5]))
+        self.phi_b = nn.Parameter(torch.FloatTensor([1, 1]))
         #self.phi_b.requires_grad = False
         self.flip = nn.Parameter(
             torch.Tensor([
@@ -86,24 +49,7 @@ class CrfNeg(Sent):
             ])
         )
         self.flip.requires_grad = False
-        """
-        self.fm1= nn.Parameter(
-            torch.FloatTensor([
-                1, 0, 0,
-                0, 1, 0,
-                0, 0, 0,
-            ]).view(3,3)
-        )
-        self.fm1.requires_grad = False
-        self.fm2 = nn.Parameter(
-            torch.FloatTensor([
-                1, 0, 0,
-                0, 0, 0,
-                0, 1, 0,
-            ]).view(3,3)
-        )
-        self.fm2.requires_grad = False
-        """
+        self.psi_bb = nn.Parameter(torch.randn(2,2))
 
     def forward(self, x, lens, a, l):
         words = x
@@ -154,35 +100,93 @@ class CrfNeg(Sent):
         #psi_ybs = (torch.stack([psi_ybs0 @ self.fm1, psi_ybs0 @ self.fm2], 1)
             .view(1, 1, len(self.S), 2, len(self.S))
             .repeat(N, T, 1, 1, 1))
+
+        phi_b = self.phi_b.view(1, 1, 2).repeat(N, T, 1)
+        psi_bb = self.psi_bb.view(1, 1, 2, 2).repeat(N, T, 1, 1)
+        # phi_s | x: N x T x S
+        # phi_neg | x: N x T x 2
+        # phi_b: N x T x 2
+        # psi_bb: N x T x 2 x 2
+        # psi_ybs: N x T x Y x 2 x S
+         
         idxs = torch.arange(0, max(lens)).to(lens.device)
         # mask: N x R
         mask = (idxs.repeat(len(lens), 1) >= lens.unsqueeze(-1))
         phi_s.masked_fill_(mask.unsqueeze(-1), 0)
         phi_neg.masked_fill_(mask.unsqueeze(-1), 0)
+        phi_b.masked_fill_(mask.unsqueeze(-1), 0)
+        psi_bb.masked_fill_(mask.view(N, T, 1, 1), 0)
+        #psi_bb[:,0].fill_(0)
         psi_ybs.masked_fill_(mask.view(N, T, 1, 1, 1).expand_as(psi_ybs), 0)
-        Z, hy = ubersum(
-            "nts,ntb,ntybs,ny->n,ny",
-            phi_s, phi_neg, psi_ybs, phi_y, batch_dims="t", modulo_total=True)
+
+        # is indexing faster (tranpose first?) or splitting?
+        # SPLIT?
+        #"""
+        phi_sl   = [x.squeeze(1) for x in phi_s.split(1, 1)]
+        phi_negl = [x.squeeze(1) for x in phi_neg.split(1, 1)]
+        phi_bl   = [x.squeeze(1) for x in phi_b.split(1, 1)]
+        psi_bbl  = [x.squeeze(1) for x in psi_bb.split(1, 1)]
+        psi_ybsl = [x.squeeze(1) for x in psi_ybs.split(1, 1)]
+        #"""
+        """
+        #[for s, n, b, bb, ybs in zip(phi_s, phi_neg, phi_b, psi_bb, psi_ybs) for y in x]
+        # Ns, Nn, Nb, Nba, Nybs 
+        ok = [y for x in zip(phi_s, phi_neg, phi_b, psi_bb, psi_ybs) for y in x]
+        import pdb; pdb.set_trace()
+
+        expr = ""
+        args = []
+        for t in range(T):
+            # phi_s | x: N x T x S
+            # phi_neg | x: N x T x 2
+            # phi_b: N x T x 2
+            # psi_bb: N x T x 2 x 2
+            # psi_ybs: N x T x Y x 2 x S
+            pass
+
+        """
+        """
+        # transpose and marginalize by hand; this doesn't work since i want to mutate
+        phi_s   = phi_s.transpose(0, 1)
+        phi_neg = phi_neg.transpose(0, 1)
+        phi_b   = phi_b.transpose(0, 1)
+        psi_bb  = psi_bb.transpose(0, 1)
+        psi_ybs = psi_ybs.transpose(0, 1)
+        """
+        psi_bbl[0] = psi_bbl[0][:,0].fill_(0)
+        for t in range(T):
+            #b = torch.logsumexp(phi_b[t].unsqueeze(-2) + phi_bb[t], dim=-2)
+            # marginalize over b_t and s_t
+            b = phi_negl[t] + phi_bl[t] + psi_bbl[t]
+            # update next psi_bb
+            if t < T-1:
+                psi_bbl[t+1] = torch.logsumexp(psi_bbl[t+1] + b.unsqueeze(-1), dim=-2)
+            phi_y = phi_y + torch.logsumexp(torch.logsumexp(
+                psi_ybsl[t] + b.view(N, 1, 2, 1) + phi_sl[t].view(N, 1, 1, len(self.S)),
+            dim=-1), dim=-1)
+        #print(phi_neg)
+        #import pdb; pdb.set_trace()
         if self.training:
             self._N += 1
-        #if self._N > 1000 and self.training:
-        """
-        if self._N > 10 and self.training:
+        if self._N > 50 and self.training:
+            # marginal densities?
+
+            """
             Zt, hx, hb = ubersum(
                 "nts,ntb,ntybs,ny->nt,nts,ntb",
                 phi_s, phi_neg, psi_ybs, phi_y, batch_dims="t", modulo_total=True)
             xp = (hx - Zt.unsqueeze(-1)).exp()
             bp = (hb - Zt.unsqueeze(-1)).exp()
             yp = (hy - Z.unsqueeze(-1)).exp()
+            """
             def stuff(i):
                 #loc = self.L.itos[l[i]]
                 asp = self.A and self.A.itos[a[i]]
                 return self.tostr(words[i]), None, asp, xp[i], yp[i], bp[i]
-            if bp.max(-1)[1].sum() > 0:
                 import pdb; pdb.set_trace()
             # wordsi, loc, asp, xpi, ypi, bpi = stuff(10)
-        """
-        return hy
+        return phi_y
+
 
     def observe(self, x, lens, l, a, y):
         raise NotImplementedError

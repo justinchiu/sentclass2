@@ -189,4 +189,7 @@ class Sent(nn.Module):
         return F1
 
     def tostr(self, x):
-        return [self.V.itos[w] for w in x.tolist()] 
+        return [self.V.itos[w] for w in x.tolist()]
+
+    def temp(self, potentials):
+        pass

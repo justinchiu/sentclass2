@@ -16,6 +16,7 @@ from sentclass.models.crflstmdiag import CrfLstmDiag
 from sentclass.models.crfemblstm import CrfEmbLstm
 from sentclass.models.crflstmlstm import CrfLstmLstm
 from sentclass.models.crfneg import CrfNeg
+from sentclass.models.crfnegt import CrfNegT
 
 import json
 
@@ -68,7 +69,7 @@ def get_args():
         choices=[
             "lstmmax", "lstmfinal",
             "crflstmdiag", "crfemblstm", "crflstmlstm",
-            "crfneg",
+            "crfneg", "crfnegt",
         ],
         default="lstmfinal"
     )
@@ -188,6 +189,17 @@ elif args.model == "crflstmlstm":
 elif args.model == "crfneg":
     assert(args.flat_data)
     model = CrfNeg(
+        V       = TEXT.vocab,
+        A       = ASPECT and ASPECT.vocab,
+        S       = SENTIMENT.vocab,
+        emb_sz  = args.emb_sz,
+        rnn_sz  = args.rnn_sz,
+        nlayers = args.nlayers,
+        dp      = args.dp,
+    )
+elif args.model == "crfnegt":
+    assert(args.flat_data)
+    model = CrfNegT(
         V       = TEXT.vocab,
         A       = ASPECT and ASPECT.vocab,
         S       = SENTIMENT.vocab,
