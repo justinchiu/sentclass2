@@ -137,6 +137,7 @@ class CrfNegT(CrfNeg):
         expr = ""
         args = []
         for t in range(T):
+            # phi_y : N x T x Y
             # phi_s | x: N x T x S
             # phi_neg | x: N x T x 2
             # phi_b: N x T x 2
@@ -169,7 +170,10 @@ class CrfNegT(CrfNeg):
         if self.training:
             self._N += 1
         if self._N > 50 and self.training:
-            # marginal densities?
+            # marginal density b
+            phi_yy = phi_y.clone().fill_(0)
+
+
 
             """
             Zt, hx, hb = ubersum(
@@ -187,6 +191,10 @@ class CrfNegT(CrfNeg):
             # wordsi, loc, asp, xpi, ypi, bpi = stuff(10)
         return phi_y
 
+
+    def marginal_s(self, phi_y, phi_s, phi_neg, phi_b, psi_bb, psi_ybs):
+        phi_y
+        pass
 
     def observe(self, x, lens, l, a, y):
         raise NotImplementedError
