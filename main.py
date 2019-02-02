@@ -211,6 +211,10 @@ elif args.model == "crfnegt":
 
 model.to(device)
 print(model)
+# test
+x = torch.load("test.pt")
+model(*x)
+# /test
 
 params = list(model.parameters())
 

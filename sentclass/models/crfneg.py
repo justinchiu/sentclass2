@@ -37,7 +37,8 @@ class CrfNeg(Sent):
             embedding_dim = emb_sz,
             padding_idx = V.stoi[self.PAD],
         )
-        self.lut.weight.data.copy_(V.vectors)
+        if V.vectors is not None:
+            self.lut.weight.data.copy_(V.vectors)
         self.lut.weight.data[V.stoi[self.PAD]] = 0
         self.lut.weight.requires_grad = False
         if self.outer_plate:
