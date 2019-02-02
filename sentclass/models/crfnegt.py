@@ -121,7 +121,8 @@ class CrfNegT(CrfNeg):
         #import pdb; pdb.set_trace()
         if self.training:
             self._N += 1
-        if self._N > 10 and self.training:
+        #if self._N > 10 and self.training:
+        if self.training and T < 5:
             # marginal density b
             phi_yl, phi_sl, phi_negl, phi_bl, psi_bbl, psi_ybsl = self.potentials(
                 phi_s, phi_neg, phi_b, psi_bb, psi_ybs)
@@ -189,26 +190,112 @@ class CrfNegT(CrfNeg):
         T = len(psi_ybsl)
         N, Y, B, S = psi_ybsl[0].shape
         py = torch.zeros(N, S).to(phi_ys)
-        # marginalize over b's
+        # compute marginalized s factors
+        myb = [(psi_ybsl[t] + phi_sl[t].view(N,1,1,len(self.S))).logsumexp(-1) for t in range(T)]
+        # fwd-bwd
+        alphas = [0 for x in myb]
+        psi_ybbl_a = [x.clone().unsqueeze(1) for x in psi_bbl]
         for t in range(T):
-            # add b_t
-            b = phi_negl[t] + phi_bl[t] + psi_bbl[t]
-            # update next psi_bb
+            b = phi_negl[t] + phi_bl[t] 
+            yb = myb[t] + b.unsqueeze(-2) + (psi_ybbl_a[t] if t > 0 else 0)
             if t < T-1:
-                psi_bbl[t+1] = (psi_bbl[t+1] + b.unsqueeze(-1)).logsumexp(-2)
-            psi_ybsl[t] = psi_ybsl[t] + b.view(N, 1, 2, 1)
+                psi_ybbl_a[t+1] = (psi_ybbl_a[t+1] + yb.unsqueeze(-1)).logsumexp(-2)
+            # inclusion
+            ybs = (psi_ybsl[t]
+                + phi_sl[t].view(N,1,1,len(self.S))
+                + b.view(N,1,2,1)
+                + (psi_ybbl_a[t].view(N,-1,2,1) if t > 0 else 0)
+            )
+            alphas[t] = ybs
+        # bwd betas
+        betas = [0 for x in myb]
+        psi_ybbl_b = [x.clone().unsqueeze(1) for x in psi_bbl]
+        for t in range(T-1, -1, -1):
+            b = phi_negl[t] + phi_bl[t]
+            yb = myb[t] + b.unsqueeze(-2) + (psi_ybbl_b[t+1] if t < T-1 else 0)
+            if t > 0:
+                psi_ybbl_b[t] = (psi_ybbl_b[t] + yb.unsqueeze(-2)).logsumexp(-1)
+            # exclusion
+            betas[t] = (psi_ybbl_b[t+1] if t < T-1 else psi_ybbl_b[0]).unsqueeze(-1)
+        ybsl = [a+b for a, b in zip(alphas, betas)]
+        sl = [ybs.logsumexp(-2).logsumexp(-2) for ybs in ybsl]
+        import pdb; pdb.set_trace()
+        if T == 3:
+            # check marginal s
+            print("marg s")
+            Z,A,B,C = ubersum(
+                "na,nab,nb,nbc,nc,nyaA,nybB,nycC,nA,nB,nC->n,nA,nB,nC",
+                phi_negl[0]+phi_bl[0], psi_bbl[1],
+                phi_negl[1]+phi_bl[1], psi_bbl[2],
+                phi_negl[2]+phi_bl[2],
+                psi_ybsl[0], psi_ybsl[1], psi_ybsl[2],
+                phi_sl[0], phi_sl[1], phi_sl[2],
+                modulo_total=True)
+            print(Z)
+            print(phi_sl[-1].logsumexp(-1))
+            print("fun")
+            import opt_einsum
+            A0 = opt_einsum.contract_path(
+                "na,nab,nb,nbc,nc,nyaA,nybB,nycC,nA,nB,nC->nB",
+                phi_negl[0]+phi_bl[0], psi_bbl[1],
+                phi_negl[1]+phi_bl[1], psi_bbl[2],
+                phi_negl[2]+phi_bl[2],
+                psi_ybsl[0], psi_ybsl[1], psi_ybsl[2],
+                phi_sl[0], phi_sl[1], phi_sl[2])
+            print("nB", A0[1])
+            A0 = opt_einsum.contract_path(
+                "na,nab,nb,nbc,nc,nyaA,nybB,nycC,nA,nB,nC->nC",
+                phi_negl[0]+phi_bl[0], psi_bbl[1],
+                phi_negl[1]+phi_bl[1], psi_bbl[2],
+                phi_negl[2]+phi_bl[2],
+                psi_ybsl[0], psi_ybsl[1], psi_ybsl[2],
+                phi_sl[0], phi_sl[1], phi_sl[2])
+            print("nC", A0[1])
+            print((C-Z.unsqueeze(-1)).exp())
+            print((sl[-1] - sl[-1].logsumexp(-1, True)).exp())
+            import pdb; pdb.set_trace()
+        """
+        # OLD
+        alphas = [x for x in phi_bl]
+        psi_bbl_a = [x.clone() for x in psi_bbl]
+        for t in range(T):
+            b = phi_negl[t] + phi_bl[t] + (psi_bbl_a[t] if t > 0 else 0)
+            if t < T-1:
+                psi_bbl_a[t+1] = (psi_bbl_a[t+1] + b.unsqueeze(-1)).logsumexp(-2)
+            # inclusion
+            alphas[t] = b
+        # bwd betas
+        betas = [x for x in phi_bl]
+        psi_bbl_b = [x.clone() for x in psi_bbl]
+        for t in range(T-1, -1, -1):
+            b = phi_negl[t] + phi_bl[t] + (psi_bbl_b[t+1] if t < T-1 else 0)
+            if t > 0:
+                psi_bbl_b[t] = (psi_bbl_b[t] + b.unsqueeze(-2)).logsumexp(-1)
+            # exclusion
+            betas[t] = psi_bbl_b[t+1] if t < T-1 else psi_bbl_b[0]
+        bl = [a+b for a, b in zip(alphas, betas)]
+
         # for each s_t marginalize over all other s_i
         psi_ybsl = [psi_ybsl[t] + phi_sl[t].view(N, 1, 1, len(self.S)) for t in range(T)]
         # needs to be in the same order as above...? oops still a mistake here
         # need to do forward backward on b to the proper messages...
         for t in range(T):
+            ybsl = [x for x in psi_ybsl]
             y_t = sum([
-                psi_ybsl[i].logsumexp(-1).logsumexp(-1)
+                (ybsl[i] + (
+                    alphas[i] if i < t else betas[i]
+                ).view(N, 1, 2, 1)).logsumexp(-1).logsumexp(-1)
                 for i in range(T) if i != t
             ])
-            phi_sl[t] = phi_sl[t] + (psi_ybsl[t] + y_t.view(N, len(self.S), 1, 1)).logsumexp(-2).logsumexp(-2)
+            phi_sl[t] = (
+                psi_ybsl[t]
+                + y_t.view(N, len(self.S), 1, 1)
+                + alphas[t].view(N, 1, 2, 1)
+                + betas[t].view(N, 1, 2, 1)
+            ).logsumexp(-2).logsumexp(-2)
+        """
         import pdb; pdb.set_trace()
-        return s
+        return phi_sl
 
     def marginal_b(self, phi_yb, phi_sl, phi_negl, phi_bl, psi_bbl, psi_ybsl):
         T = len(psi_ybsl)
@@ -220,7 +307,7 @@ class CrfNegT(CrfNeg):
         phi_bl = [b + phi_b for b in phi_bl]
         # get marginal for b's
         # fwd alphas
-        alphas = [x for x in phi_sl]
+        alphas = [x for x in phi_bl]
         psi_bbl_a = [x.clone() for x in psi_bbl]
         for t in range(T):
             b = phi_negl[t] + phi_bl[t] + psi_bbl_a[t]
@@ -228,7 +315,7 @@ class CrfNegT(CrfNeg):
                 psi_bbl_a[t+1] = (psi_bbl_a[t+1] + b.unsqueeze(-1)).logsumexp(-2)
             alphas[t] = b
         # bwd betas
-        betas = [x for x in phi_sl]
+        betas = [x for x in phi_bl]
         psi_bbl_b = [x.clone() for x in psi_bbl]
         psi_bbl_b.append(psi_bbl_b[0])
         for t in range(T-1, -1, -1):
@@ -236,9 +323,9 @@ class CrfNegT(CrfNeg):
             if t > 0:
                 psi_bbl_b[t] = (psi_bbl_b[t] + b.unsqueeze(-2)).logsumexp(-1)
             betas[t] = b
-        s = [a+b for a, b in zip(alphas, betas)]
+        b = [a+b for a, b in zip(alphas, betas)]
         import pdb; pdb.set_trace()
-        return s
+        return b
 
     def observe(self, x, lens, l, a, y):
         raise NotImplementedError
