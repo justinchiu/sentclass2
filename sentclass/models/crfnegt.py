@@ -191,7 +191,10 @@ class CrfNegT(CrfNeg):
         N, Y, B, S = psi_ybsl[0].shape
         py = torch.zeros(N, S).to(phi_ys)
         # compute marginalized s factors
-        myb = [(psi_ybsl[t] + phi_sl[t].view(N,1,1,len(self.S))).logsumexp(-1) for t in range(T)]
+        myb = [
+            (psi_ybsl[t] + phi_sl[t].view(N,1,1,len(self.S))).logsumexp(-1)
+            for t in range(T)
+        ]
         # fwd-bwd
         alphas = [0 for x in myb]
         psi_ybbl_a = [x.clone().unsqueeze(1) for x in psi_bbl]
@@ -199,7 +202,8 @@ class CrfNegT(CrfNeg):
             b = phi_negl[t] + phi_bl[t] 
             yb = myb[t] + b.unsqueeze(-2) + (psi_ybbl_a[t] if t > 0 else 0)
             if t < T-1:
-                psi_ybbl_a[t+1] = (psi_ybbl_a[t+1] + yb.unsqueeze(-1)).logsumexp(-2)
+                psi_ybbl_a[t+1] = (
+                    psi_ybbl_a[t+1] + yb.unsqueeze(-1)).logsumexp(-2)
             # inclusion
             ybs = (psi_ybsl[t]
                 + phi_sl[t].view(N,1,1,len(self.S))
