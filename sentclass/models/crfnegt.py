@@ -116,13 +116,14 @@ class CrfNegT(CrfNeg):
         phi_b.masked_fill_(mask.unsqueeze(-1), 0)
         psi_bb.masked_fill_(mask.view(N, T, 1, 1), 0)
         #psi_bb[:,0].fill_(0)
+        # Huh? isn't expand horrible
+        #psi_ybs.masked_fill_(mask.view(N, T, 1, 1, 1).expand_as(psi_ybs), 0)
         
         #print(phi_neg)
         #import pdb; pdb.set_trace()
         if self.training:
             self._N += 1
-        #if self._N > 10 and self.training:
-        if self.training and T < 5:
+        if self._N > 130 and self.training:
             # marginal density b
             phi_yl, phi_sl, phi_negl, phi_bl, psi_bbl, psi_ybsl = self.potentials(
                 phi_s, phi_neg, phi_b, psi_bb, psi_ybs)
@@ -134,9 +135,10 @@ class CrfNegT(CrfNeg):
             def stuff(i):
                 #loc = self.L.itos[l[i]]
                 asp = self.A and self.A.itos[a[i]]
-                return self.tostr(words[i]), None, asp, ps[i], yp[i], pb[i]
+                return self.tostr(words[i]), None, asp, ps[i], None, pb[i]
                 import pdb; pdb.set_trace()
-            # wordsi, loc, asp, xpi, ypi, bpi = stuff(10)       psi_ybs.masked_fill_(mask.view(N, T, 1, 1, 1).expand_as(psi_ybs), 0)
+            # wordsi, loc, asp, xpi, ypi, bpi = stuff(10)
+            import pdb; pdb.set_trace()
 
         # SPLIT...MAINTAINS REFERENCE TO ORIGINAL VALUES
         phi_y = torch.zeros(N, len(self.S)).to(self.lut.weight.device)
