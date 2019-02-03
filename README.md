@@ -24,4 +24,5 @@ Use the `--devid #` option to utilize a GPU.
 * Looks like `crfneg` and `crfnegt` both have the same deficiency: since we use the output of the
 BLSTM to parameterize $$b_t$$ which is supposed to control negation, the embeddings learn to only give
 saliency whil $$b_t$$ is used to indicate sentiment. Tricky LSTM!
-* Next step: Constrain the parameterization of $$\phi(b_t)$$ further.
+* Next step: Constrain the parameterization of $$\phi(b_t)$$ further. Use BLSTM to choose which word to attend to.
+Negation will be a function of the attended word's embedding only.
