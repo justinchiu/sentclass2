@@ -1,3 +1,4 @@
+# 0.68, 0.71
 # python main.py --flat-data --devid 0 --data sst --fine-grain --ebsz 512 --rnn-sz 256 --lr 0.01 --dp 0.2 --bsz 128 --model lstmmax
 # python main.py --flat-data --devid 0 --data sst --fine-grain --ebsz 512 --rnn-sz 256 --lr 0.01 --dp 0.2 --bsz 128 --model crfemblstm
 # python main.py --flat-data --devid 0 --data sst --fine-grain --ebsz 512 --rnn-sz 256 --lr 0.003 --dp 0.2 --bsz 128 --model crflstmlstm
@@ -17,10 +18,12 @@ from sentclass.models.crfemblstm import CrfEmbLstm
 from sentclass.models.crflstmlstm import CrfLstmLstm
 from sentclass.models.crfneg import CrfNeg
 from sentclass.models.crfnegt import CrfNegT
+from sentclass.models.crfnega import CrfNegA
 
 import json
 
 torch.backends.cudnn.enabled = True
+torch.backends.cudnn.deterministic = True
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -69,7 +72,7 @@ def get_args():
         choices=[
             "lstmmax", "lstmfinal",
             "crflstmdiag", "crfemblstm", "crflstmlstm",
-            "crfneg", "crfnegt",
+            "crfneg", "crfnegt", "crfnega",
         ],
         default="lstmfinal"
     )
@@ -116,7 +119,9 @@ elif args.data == "sst":
         train_subtrees = args.train_subtrees,
         #filter_pred=lambda ex: ex.label[0] != 'neutral',
     )
-    TEXT.build_vocab(train, valid, test)
+    #TEXT.build_vocab(train, valid, test)
+    TEXT.build_vocab(train)
+    #TEXT.build_vocab(train, valid)
     SENTIMENT.build_vocab(train)
 TEXT.vocab.load_vectors(vectors=GloVe(name="840B"))
 
@@ -208,12 +213,23 @@ elif args.model == "crfnegt":
         nlayers = args.nlayers,
         dp      = args.dp,
     )
+elif args.model == "crfnega":
+    assert(args.flat_data)
+    model = CrfNegA(
+        V       = TEXT.vocab,
+        A       = ASPECT and ASPECT.vocab,
+        S       = SENTIMENT.vocab,
+        emb_sz  = args.emb_sz,
+        rnn_sz  = args.rnn_sz,
+        nlayers = args.nlayers,
+        dp      = args.dp,
+    )
 
 model.to(device)
 print(model)
 # test
-x = torch.load("test.pt")
-model(*x)
+#x = torch.load("test.pt")
+#model(*x)
 # /test
 
 params = list(model.parameters())

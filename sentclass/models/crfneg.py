@@ -41,6 +41,11 @@ class CrfNeg(Sent):
             self.lut.weight.data.copy_(V.vectors)
         self.lut.weight.data[V.stoi[self.PAD]] = 0
         self.lut.weight.requires_grad = False
+        self.lut_neg = nn.Embedding(
+            num_embeddings = len(V),
+            embedding_dim = emb_sz,
+            padding_idx = V.stoi[self.PAD],
+        )
         if self.outer_plate:
             self.lut_la = nn.Embedding(
                 num_embeddings = num_loc * num_asp,
