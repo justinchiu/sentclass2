@@ -26,3 +26,4 @@ BLSTM to parameterize $$b_t$$ which is supposed to control negation, the embeddi
 saliency whil $$b_t$$ is used to indicate sentiment. Tricky LSTM!
 * Next step: Constrain the parameterization of $$\phi(b_t)$$ further. Use BLSTM to choose which word to attend to.
 Negation will be a function of the attended word's embedding only.
+* Constraint worked, but model is weak and no sign of capturing negation.
